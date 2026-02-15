@@ -1,0 +1,369 @@
+<script>
+  var formConfig = null;
+  var selectedFiles = [];
+  var MAX_FILES = 3;
+
+  /**
+   * 初期化: サーバーからフォーム設定を取得してフォームを描画
+   */
+  google.script.run
+    .withSuccessHandler(function (config) {
+      formConfig = config;
+      // maxFiles を設定から取得
+      var fileField = config.fields.find(function (f) { return f.type === "file"; });
+      if (fileField && fileField.maxFiles) {
+        MAX_FILES = fileField.maxFiles;
+      }
+      renderForm(config);
+    })
+    .withFailureHandler(function (err) {
+      showMessage("フォーム設定の読み込みに失敗しました: " + err.message, "error");
+    })
+    .getFormConfig();
+
+  /**
+   * フォーム設定からHTMLを動的生成
+   */
+  function renderForm(config) {
+    var container = document.getElementById("form-fields");
+    var html = "";
+
+    config.fields.forEach(function (field) {
+      if (field.type === "file") {
+        html += renderFileField(field);
+      } else if (
+        field.id === "dateFrom" ||
+        field.id === "dateTo"
+      ) {
+        if (field.id === "dateFrom") {
+          html += renderDateRangeField(config.fields);
+        }
+      } else {
+        html += renderTextField(field);
+      }
+    });
+
+    container.innerHTML = html;
+    setupFileUpload();
+  }
+
+  function renderTextField(field) {
+    var required = field.required
+      ? '<span class="required">*</span>'
+      : "";
+    var tag;
+
+    if (field.type === "textarea") {
+      tag =
+        '<textarea id="' + field.id + '" name="' + field.id + '"' +
+        ' placeholder="' + (field.placeholder || "") + '"' +
+        (field.required ? " required" : "") +
+        "></textarea>";
+    } else {
+      tag =
+        '<input type="' + field.type + '" id="' + field.id + '"' +
+        ' name="' + field.id + '"' +
+        ' placeholder="' + (field.placeholder || "") + '"' +
+        (field.required ? " required" : "") +
+        ">";
+    }
+
+    return (
+      '<div class="form-field">' +
+      "<label>" + field.label + required + "</label>" +
+      tag +
+      (field.hint ? '<div class="hint">' + field.hint + "</div>" : "") +
+      "</div>"
+    );
+  }
+
+  function renderDateRangeField(fields) {
+    var fromField = fields.find(function (f) { return f.id === "dateFrom"; });
+    var toField = fields.find(function (f) { return f.id === "dateTo"; });
+
+    var fromRequired = fromField && fromField.required
+      ? '<span class="required">*</span>'
+      : "";
+
+    return (
+      '<div class="form-field">' +
+      "<label>日時" + fromRequired + "</label>" +
+      '<div class="date-range">' +
+      '<div class="date-input-wrap">' +
+      "<label>開始</label>" +
+      '<input type="datetime-local" id="dateFrom" name="dateFrom"' +
+      (fromField && fromField.required ? " required" : "") + ">" +
+      "</div>" +
+      '<div class="separator">〜</div>' +
+      '<div class="date-input-wrap">' +
+      "<label>終了（任意）</label>" +
+      '<input type="datetime-local" id="dateTo" name="dateTo">' +
+      "</div>" +
+      "</div>" +
+      (toField && toField.hint
+        ? '<div class="hint">' + toField.hint + "</div>"
+        : "") +
+      "</div>"
+    );
+  }
+
+  function renderFileField(field) {
+    return (
+      '<div class="form-field">' +
+      "<label>" + field.label + "（最大" + (field.maxFiles || 1) + "枚）</label>" +
+      '<div class="file-upload-area" id="drop-area">' +
+      '<input type="file" id="file-input" accept="' +
+      (field.accept || "image/*") + '" multiple>' +
+      '<div class="upload-icon">&#128247;</div>' +
+      "<p>クリックまたはドラッグ&ドロップで画像を選択</p>" +
+      '<p class="hint">最大' + (field.maxFiles || 1) + '枚まで選択できます</p>' +
+      "</div>" +
+      '<div class="image-previews" id="image-previews"></div>' +
+      "</div>"
+    );
+  }
+
+  /**
+   * ファイルアップロードのイベント設定
+   */
+  function setupFileUpload() {
+    var dropArea = document.getElementById("drop-area");
+    var fileInput = document.getElementById("file-input");
+
+    if (!dropArea || !fileInput) return;
+
+    dropArea.addEventListener("click", function () {
+      fileInput.click();
+    });
+
+    fileInput.addEventListener("change", function (e) {
+      for (var i = 0; i < e.target.files.length; i++) {
+        if (selectedFiles.length >= MAX_FILES) {
+          showMessage("写真は最大" + MAX_FILES + "枚までです。", "error");
+          break;
+        }
+        handleFile(e.target.files[i]);
+      }
+      fileInput.value = "";
+    });
+
+    ["dragenter", "dragover"].forEach(function (eventName) {
+      dropArea.addEventListener(eventName, function (e) {
+        e.preventDefault();
+        dropArea.classList.add("dragover");
+      });
+    });
+
+    ["dragleave", "drop"].forEach(function (eventName) {
+      dropArea.addEventListener(eventName, function (e) {
+        e.preventDefault();
+        dropArea.classList.remove("dragover");
+      });
+    });
+
+    dropArea.addEventListener("drop", function (e) {
+      var files = e.dataTransfer.files;
+      for (var i = 0; i < files.length; i++) {
+        if (selectedFiles.length >= MAX_FILES) {
+          showMessage("写真は最大" + MAX_FILES + "枚までです。", "error");
+          break;
+        }
+        handleFile(files[i]);
+      }
+    });
+  }
+
+  /**
+   * ファイル選択時の処理（プレビュー表示 + Base64変換）
+   */
+  function handleFile(file) {
+    if (!file.type.startsWith("image/")) {
+      showMessage("画像ファイルを選択してください。", "error");
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      showMessage("ファイルサイズは10MB以下にしてください。", "error");
+      return;
+    }
+
+    if (selectedFiles.length >= MAX_FILES) {
+      showMessage("写真は最大" + MAX_FILES + "枚までです。", "error");
+      return;
+    }
+
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      var fileData = {
+        base64: e.target.result,
+        name: file.name,
+        mimeType: file.type,
+      };
+      selectedFiles.push(fileData);
+      renderPreviews();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  /**
+   * プレビュー一覧を描画
+   */
+  function renderPreviews() {
+    var container = document.getElementById("image-previews");
+    var html = "";
+
+    selectedFiles.forEach(function (file, index) {
+      html +=
+        '<div class="image-preview">' +
+        '<img src="' + file.base64 + '" alt="プレビュー ' + (index + 1) + '">' +
+        '<button type="button" class="remove-btn" onclick="removeFile(' + index + ')">&times;</button>' +
+        '<div class="preview-label">' + (index + 1) + '/' + MAX_FILES + '</div>' +
+        "</div>";
+    });
+
+    container.innerHTML = html;
+
+    // 上限に達したらドロップエリアを非表示
+    var dropArea = document.getElementById("drop-area");
+    if (selectedFiles.length >= MAX_FILES) {
+      dropArea.style.display = "none";
+    } else {
+      dropArea.style.display = "";
+    }
+  }
+
+  /**
+   * 指定インデックスのファイルを削除
+   */
+  function removeFile(index) {
+    selectedFiles.splice(index, 1);
+    renderPreviews();
+  }
+
+  /**
+   * フォーム送信
+   */
+  function handleSubmit(e) {
+    e.preventDefault();
+    clearErrors();
+
+    var formData = {};
+    var hasError = false;
+
+    formConfig.fields.forEach(function (field) {
+      if (field.type === "file") return;
+
+      var el = document.getElementById(field.id);
+      if (!el) return;
+
+      var value = el.value.trim();
+      formData[field.id] = value;
+
+      if (field.required && !value) {
+        showFieldError(field.id, "「" + field.label + "」は必須です");
+        hasError = true;
+      }
+    });
+
+    // 日時の範囲チェック
+    if (formData.dateFrom && formData.dateTo) {
+      if (new Date(formData.dateTo) <= new Date(formData.dateFrom)) {
+        showFieldError("dateTo", "終了日時は開始日時より後にしてください");
+        hasError = true;
+      }
+    }
+
+    if (hasError) return;
+
+    var payload = {
+      formData: formData,
+      files: selectedFiles,
+    };
+
+    setLoading(true);
+
+    google.script.run
+      .withSuccessHandler(function (result) {
+        setLoading(false);
+        if (result.success) {
+          showMessage(result.message, "success");
+          resetForm();
+        } else {
+          showMessage(result.message, "error");
+        }
+      })
+      .withFailureHandler(function (err) {
+        setLoading(false);
+        showMessage(
+          "送信に失敗しました: " + err.message,
+          "error"
+        );
+      })
+      .submitForm(payload);
+  }
+
+  /**
+   * フォームリセット
+   */
+  function resetForm() {
+    document.getElementById("survey-form").reset();
+    selectedFiles = [];
+    renderPreviews();
+    clearErrors();
+  }
+
+  /**
+   * フィールドエラー表示
+   */
+  function showFieldError(fieldId, message) {
+    var el = document.getElementById(fieldId);
+    if (el) {
+      el.classList.add("field-error");
+      var errorDiv = document.createElement("div");
+      errorDiv.className = "error-text";
+      errorDiv.textContent = message;
+      el.parentNode.appendChild(errorDiv);
+    }
+  }
+
+  function clearErrors() {
+    document.querySelectorAll(".field-error").forEach(function (el) {
+      el.classList.remove("field-error");
+    });
+    document.querySelectorAll(".error-text").forEach(function (el) {
+      el.remove();
+    });
+    hideMessage();
+  }
+
+  /**
+   * メッセージ表示
+   */
+  function showMessage(text, type) {
+    var msg = document.getElementById("message");
+    msg.textContent = text;
+    msg.className = "message " + type;
+    msg.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function hideMessage() {
+    var msg = document.getElementById("message");
+    msg.className = "message";
+    msg.textContent = "";
+  }
+
+  /**
+   * ローディング表示
+   */
+  function setLoading(active) {
+    var overlay = document.getElementById("loading");
+    var btn = document.querySelector(".btn-submit");
+    if (active) {
+      overlay.classList.add("active");
+      btn.disabled = true;
+    } else {
+      overlay.classList.remove("active");
+      btn.disabled = false;
+    }
+  }
+</script>

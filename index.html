@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top" />
+    <?!= include('css'); ?>
+  </head>
+  <body>
+    <div class="form-container">
+      <div class="form-header">
+        <h1 id="form-title">アンケートフォーム</h1>
+        <p id="form-description">読み込み中...</p>
+      </div>
+
+      <div id="message" class="message"></div>
+
+      <form id="survey-form" onsubmit="handleSubmit(event)">
+        <div class="form-section">
+          <div id="form-fields">
+            <!-- JS で動的に生成 -->
+          </div>
+        </div>
+
+        <div class="form-section form-actions">
+          <button type="button" class="btn-clear" onclick="resetForm()">
+            フォームをクリア
+          </button>
+          <button type="submit" class="btn-submit">送信</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="loading-overlay" id="loading">
+      <div class="spinner"></div>
+      <p>送信中...</p>
+    </div>
+
+    <?!= include('js'); ?>
+
+    <script>
+      // タイトルと説明文を設定から反映
+      google.script.run
+        .withSuccessHandler(function (config) {
+          document.getElementById("form-title").textContent = config.title;
+          document.getElementById("form-description").textContent =
+            config.description;
+        })
+        .getFormConfig();
+    </script>
+  </body>
+</html>
